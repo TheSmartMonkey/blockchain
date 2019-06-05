@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Install dependencies.
 ADD requirements.txt /app
+RUN yum install gcc
 RUN cd /app && \
     pip install -r requirements.txt
 
