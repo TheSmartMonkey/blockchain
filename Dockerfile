@@ -8,8 +8,11 @@ RUN cd /app && \
     pip install -r requirements.txt
 
 # Add actual source code.
-ADD blockchain.py /app
+ADD server.py /app
+ADD block.py /app
+ADD node.py /app
+ADD bccrypto.py /app
 
 EXPOSE 5000
 
-CMD ["python", "blockchain.py", "--port", "5000"]
+CMD ["python", "server.py", "--port", "5000"]
