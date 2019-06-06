@@ -36,7 +36,7 @@ def new_transaction():
             index = node.new_transaction(values)
             logger.info("transaction added:"+json.dumps(values))
             response = {'message': f'Transaction will be added to Block {index}'}
-            return jsonify(response), 201
+            return jsonify(response), 200
         except Exception as e:
             logger.error("Error "+e.__repr__()+" when creating transaction "+json.dumps(values))
             return "Invalid transaction",403

@@ -16,6 +16,9 @@ $ pip install pipenv
 ```
 $ pipenv install 
 ```
+```bash
+yum install gcc
+```
 
 4. Run the server:
     * `$ pipenv run python server.py` 
