@@ -36,8 +36,7 @@ def new_transaction():
         try:
             index=node.new_transaction(values)
             logger.info("transaction added:"+json.dumps(values))
-            response = {'message': f'Transaction will be added to Block {index}'}
-            return jsonify(response), 200
+            return f'Transaction will be added to Block {index}', 200
         except SignatureError:
             logger.error("Signature error in transaction "+json.dumps(values))
             return "Bad Signature",403
