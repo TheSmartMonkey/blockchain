@@ -1,19 +1,29 @@
+
 from uuid import uuid4
 import requests
 import json
 from random import sample
+from os.path import exists
+from gzip import GzipFile
+import time
+import threading
 
 import logging
 logger = logging.getLogger(__name__)
 
 # number of node that each node send the message to in the P2P network
-ADJENCENT_NODES = 3
+ADJENCENT_NODES=3
 
 from block import Blockchain,Transaction,SignedTransaction,transaction_from_dict,block_from_dict
 
 class SignatureError(Exception):
     """exceptions in case of bad signature"""
     pass
+
+class OutOfToken(Exception):
+    """exceptions in case of lack of token to cover transaction"""
+    pass
+
 
 class Node(object):
     """
@@ -22,23 +32,44 @@ class Node(object):
     def __init__(self):
         self.node_identifier = str(uuid4()).replace('-', '')
         self.nodeUrl=None
-        self.nodeList = set()
+        self.nodeList=set()
         self.blockchain = Blockchain()
 
     def set_node_url(self,nodeUrl):
-        self.nodeUrl = nodeUrl
+        self.nodeUrl=nodeUrl
         self.nodeList.add(nodeUrl)
+    
+    def init_blockchain(self):
+        self.blockchain_filename="blockchain_"+self.nodeUrl.replace(":","_")+".gz"
+        if exists(self.blockchain_filename):
+            logger.info("Loading blockchain from file:"+self.blockchain_filename)
+            self.blockchain.chain=[]
+            for l in GzipFile(self.blockchain_filename,"r"):
+                block_dict=json.loads(l.decode().strip())
+                self.blockchain.chain.append(block_from_dict(block_dict))
+            logger.info("Blockchain loaded")
+
+    def save_block(self,block):
+        with GzipFile(self.blockchain_filename,"a") as f:
+            f.write(json.dumps(block.to_dict()).encode()+b"\n")
+
+    def save_chain(self,chain):
+        with GzipFile(self.blockchain_filename,"w") as f:
+            for block in chain:
+                f.write(json.dumps(block.to_dict()).encode()+b"\n")
+        logger.info("Blockchain saved")
+
 
     def register_node(self,registerNodeUrl):
         logger.info(f'Registering node {self.nodeUrl} into {registerNodeUrl}')
-        response = requests.post(f"http://{registerNodeUrl}/nodes/add",
+        response=requests.post(f"http://{registerNodeUrl}/nodes/add",
                         headers={"Content-Type": "application/json"}, 
                         data=json.dumps({"node":self.nodeUrl}))
-        values = response.json()
-        self.nodeList = set(values['nodes'])
+        values=response.json()
+        self.nodeList=set(values['nodes'])
         logger.info("Connected to nodes:"+",".join(self.nodeList))
         # simple to initialise the blockchain
-        self.blockchain.chain = []
+        self.blockchain.chain=[]
         self.resolve_conflicts()
 
     def add_node(self,newNodeUrl):
@@ -47,20 +78,24 @@ class Node(object):
             self.nodeList.add(newNodeUrl)
             self.broadcast_event({"type":"new_node","nodeUrl":newNodeUrl},set([newNodeUrl]))
         return self.nodeList
-
+ 
     def add_nodes(self,addNodeList):
-        self.nodeList = self.nodeList.union(addNodeList)
+        self.nodeList=self.nodeList.union(addNodeList)
 
     def parse_transaction_values(self,values):
-        trvalues = values['transaction']
-        transaction = transaction_from_dict(trvalues)
-        signedTransaction = SignedTransaction(transaction,values['signature'],values['public_key'])
+        trvalues=values['transaction']
+        transaction=transaction_from_dict(trvalues)
+        signedTransaction=SignedTransaction(transaction,values['signature'],values['public_key'])
         return signedTransaction
 
     def new_transaction(self,values):
-        signedTransaction = self.parse_transaction_values(values)
+        signedTransaction=self.parse_transaction_values(values)
         if signedTransaction.is_valid():
-            index = self.blockchain.new_transaction(signedTransaction.transaction)
+            balance=self.blockchain.get_user_balance(signedTransaction.transaction.sender)
+            if signedTransaction.transaction.amount > balance:
+                #the user has not enough token to cover this transaction
+                raise OutOfToken
+            index=self.blockchain.new_transaction(signedTransaction.transaction)
             logger.info("New transaction added coming client")
             self.broadcast_event({"type":"new_transaction","transaction":values},set())
             return index
@@ -69,13 +104,13 @@ class Node(object):
 
     def broadcast_event(self,event,visitedNodes):
         visitedNodes.add(self.nodeUrl)
-        targetedNodes = self.nodeList.difference(visitedNodes)
-        if len(targetedNodes) > ADJENCENT_NODES:
+        targetedNodes=self.nodeList.difference(visitedNodes)
+        if len(targetedNodes)>ADJENCENT_NODES:
             # if to many node we sample to a sublist and let the other nodes do the work
-            targetedNodes = sample(targetedNodes,ADJENCENT_NODES)
-        newVisitedNodes = visitedNodes.union(targetedNodes)
+            targetedNodes=sample(targetedNodes,ADJENCENT_NODES)
+        newVisitedNodes=visitedNodes.union(targetedNodes)
         if len(targetedNodes)>0:
-            message = json.dumps({"event":event,"nodefrom":self.nodeUrl,"visited_nodes":list(newVisitedNodes)})
+            message=json.dumps({"event":event,"nodefrom":self.nodeUrl,"visited_nodes":list(newVisitedNodes)})
             logger.debug("broacasting message"+message+" to:"+",".join(targetedNodes))
             # we target only a subset of node expecting the other to broadcast the message to their neighbours
             for node in targetedNodes:
@@ -85,24 +120,25 @@ class Node(object):
 
     def received_event(self,event,nodefrom,visitedNodes):
         logger.debug('event received '+ json.dumps(event))
-        if event["type"] == "new_node":
-            newUrl = event["nodeUrl"]
+        if event["type"]=="new_node":
+            newUrl=event["nodeUrl"]
             self.nodeList.add(newUrl)
             logger.info(f"node {newUrl} added")
             logger.debug(f"all nodes "+",".join(self.nodeList))
         elif event["type"]=="new_transaction":
             # we should validate if the transaction is valid to avoid forged transactions
-            values = event["transaction"]
-            signedTransaction = self.parse_transaction_values(values)
+            values=event["transaction"]
+            signedTransaction=self.parse_transaction_values(values)
             if signedTransaction.is_valid():
-                index = self.blockchain.new_transaction(signedTransaction.transaction)
+                index=self.blockchain.new_transaction(signedTransaction.transaction)
                 logger.info("New transaction added coming from node:%s to block %d"%(nodefrom,index))
             else:
                 logger.error("Received an invalid transaction")
-        elif event["type"] == "new_block":
+        elif event["type"]=="new_block":
             # we should validate if the block is valid to avoid forged block
-            block = block_from_dict(event["block"])
-            self.blockchain.add_block(block)
+            block=block_from_dict(event["block"])
+            if self.blockchain.add_block(block):
+                self.save_block(block)
 
         visitedNodes.add(self.nodeUrl)
         self.broadcast_event(event,visitedNodes)
@@ -140,14 +176,13 @@ class Node(object):
 
         # Grab and verify the chains from all the nodes in our network
         for node in self.nodeList:
-            if node != self.nodeUrl:
+            if node!=self.nodeUrl:
                 response = requests.get(f'http://{node}/chain')
 
                 if response.status_code == 200:
                     length = response.json()['length']
                     chain_dict = response.json()['chain']
-                    chain = [block_from_dict(json_block) for json_block in chain_dict]
-                    print(chain)
+                    chain=[block_from_dict(json_block) for json_block in chain_dict]
                     # Check if the length is longer and the chain is valid
                     if not self.blockchain.valid_chain(chain):
                         logger.debug("invalid chain received")
@@ -159,10 +194,25 @@ class Node(object):
         # Replace our chain if we discovered a new, valid chain longer than ours
         if new_chain:
             logger.info("New chain loaded")
-            print(new_chain)
             self.blockchain.chain = new_chain
+            self.save_chain(new_chain)
             return True
 
         return False
 
+class BackgroundMiner(object):
+    def __init__(self,node,interval=30):
+        self.interval = interval
+
+        thread = threading.Thread(target=self.run, args=(node,))
+        thread.daemon = True
+        thread.start()
+
+    def run(self,node):
+        while True:
+            # More statements comes here
+            if len(node.blockchain.current_transactions)>0:
+                logger.info("Mining a new block")
+                node.mine()
+            time.sleep(self.interval)
 

@@ -19,35 +19,35 @@ class JsonObject(object):
 
     def to_dict(self):
         return(vars(self).copy())
-
+  
     def to_json(self):
         return json.dumps(self.to_dict(), sort_keys=True)
-
+ 
 class Transaction(JsonObject):
     def __init__(self,sender,recipient,amount):
-        self.sender = sender
-        self.recipient = recipient
-        self.amount = amount
+        self.sender=sender
+        self.recipient=recipient
+        self.amount=amount
 
     def sign(self,private_key):
         return sign_message(self.to_json(),private_key)
 
     def is_valid(self,public_key):
-        return self.amount > 0 and self.sender == hash_string(public_key)
+        return self.amount>0 and self.sender==hash_string(public_key)
 
 class SignedTransaction(JsonObject):
     def __init__(self,transaction,signature,public_key):
-        self.transaction = transaction
-        self.signature = signature
-        self.public_key = public_key
+        self.transaction=transaction
+        self.signature=signature
+        self.public_key=public_key
 
     def is_valid(self):
         return check_signature(self.transaction.to_json(),self.signature,self.public_key) and self.transaction.is_valid(self.public_key)
 
     def to_dict(self):
         dvars=vars(self).copy()
-        dvars["transaction"] = self.transaction.to_dict()
-        dvars["public_key"] = self.public_key
+        dvars["transaction"]=self.transaction.to_dict()
+        dvars["public_key"]=self.public_key
         return dvars
 
 def transaction_from_dict(transaction_dict):
@@ -55,31 +55,31 @@ def transaction_from_dict(transaction_dict):
 
 class Block(JsonObject):
     def __init__(self,index,timestamp,proof,previous_hash,transactions):
-        self.index = index
-        self.timestamp = timestamp
-        self.proof = proof
-        self.previous_hash = previous_hash
-        self.transactions = transactions
+        self.index=index
+        self.timestamp=timestamp
+        self.proof=proof
+        self.previous_hash=previous_hash
+        self.transactions=transactions
 
     def hash(self):
         return hash_string(self.to_json())
     
     def to_dict(self):
-        dvars = vars(self).copy()
-        dvars["transactions"] = [t.to_dict() for t in self.transactions]
+        dvars=vars(self).copy()
+        dvars["transactions"]=[t.to_dict() for t in self.transactions]
         return dvars
 
 def block_from_dict(block_dict):
-    transactions = [transaction_from_dict(td) for td in block_dict['transactions']]
+    transactions=[transaction_from_dict(td) for td in block_dict['transactions']]
     return Block(block_dict['index'],block_dict['timestamp'],block_dict['proof'],block_dict['previous_hash'],transactions)
 
 class Blockchain(object):
     def __init__(self):
         self.current_transactions = []
         self.chain = []
-
+ 
         # Create the genesis block
-        self.new_block(previous_hash = '1', proof = 100)
+        self.new_block(previous_hash='1', proof=100)
 
     def valid_chain(self, chain):
         """
@@ -89,7 +89,7 @@ class Blockchain(object):
         :return: True if valid, False if not
         """
 
-        previous_block = chain[0]
+        previous_block= chain[0]
         current_index = 1
 
         while current_index < len(chain):
@@ -110,6 +110,19 @@ class Blockchain(object):
 
         for transaction in self.current_transactions:
             yield transaction,"pending"
+
+    def get_user_balance(self,address):
+        send_token=sum(transaction.amount 
+                            for transaction,status in self.iter_transaction() 
+                            if transaction.sender==address)
+        received_token=sum(transaction.amount 
+                            for transaction,status in self.iter_transaction() 
+                            if transaction.recipient==address and status=="validated")
+ 
+        # we give 1000 token to each user to initialize the system
+        balance=1000+received_token-send_token
+        logger.info(f"Balance for {address} received {received_token} send {send_token} balance {balance}")
+        return balance
 
     def valid_block(self,previous_block,block):
         # Check that the hash of the block is correct and that the proof is valid
@@ -184,9 +197,9 @@ class Blockchain(object):
         """
         Simple Proof of Work Algorithm:
 
-            - Find a number p' such that hash(pp') contains leading 4 zeroes
-            - Where p is the previous proof, and p' is the new proof
-        
+         - Find a number p' such that hash(pp') contains leading 4 zeroes
+         - Where p is the previous proof, and p' is the new proof
+         
         :return: <int>
         """
 
